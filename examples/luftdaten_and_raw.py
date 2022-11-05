@@ -1,16 +1,18 @@
 import logging
 import sys
 import requests
-import ST7735
+import ST7735 # LCD display
 import time
 import colorsys
-from bme280 import BME280
-from pms5003 import PMS5003, ReadTimeoutError
 from subprocess import PIPE, Popen, check_output
 from PIL import Image, ImageDraw, ImageFont
 from fonts.ttf import RobotoMedium as UserFont
-from enviroplus import gas
+from collections import deque # to implement circular bufffer for moving average
 
+# import sensors ========================================================
+from bme280 import BME280
+from pms5003 import PMS5003, ReadTimeoutError
+from enviroplus import gas
 try:
     from smbus2 import SMBus
 except ImportError:
@@ -18,12 +20,20 @@ except ImportError:
 try:
     # Transitional fix for breaking change in LTR559
     from ltr559 import LTR559
-    ltr559 = LTR559()
+    sensors['ltr559'] = LTR559()
 except ImportError:
     import ltr559
+    sensors['ltr559'] = ltr559()
 
-print("""luftdaten_combined.py - This combines the functionality of luftdaten.py and combined.py
-================================================================================================
+sensors['gas'] = gas()
+bus = SMBus(1)
+sensors['bme280'] = BME280(i2c_dev=bus)
+sensors['pms5003'] = PMS5003()
+# ========================================================================
+
+print("""
+luftdaten_and_raw.py - Uploads data to luftdaten and saves raw values to disk
+=============================================================================
 Luftdaten INFO
 Reads temperature, pressure, humidity,
 PM2.5, and PM10 from Enviro plus and sends data to Luftdaten,
@@ -39,12 +49,18 @@ Press Ctrl+C to exit!
 
 ========================================================================
 
-Combined INFO:
-Displays readings from all of Enviro plus' sensors
+Combined Raw:
+Saves raw data to disk
+
+NOTE: temperature is not adjusted for CPU temperature (the sensor board
+      is assumed to be connected to the raspberry pi via a cable)
 
 Press Ctrl+C to exit!
 
 """)
+
+# prefix to the sensor ID for upload to luftdaten
+id_prefix = 'esp8266-'
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s',
@@ -52,33 +68,33 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S')
 
 logging.info(""" """)
-bus = SMBus(1)
 
-# Create BME280 instance
-bme280 = BME280(i2c_dev=bus)
-
-
-# Create PMS5003 instance
-pms5003 = PMS5003()
-
-# Create a values dict to store the data
+# Create a dictionary with variable names and units
 units = {
+    "cpu_temperature": "C",
     "temperature": "C",
+    "compensated_temperature": "C"
     "pressure": "hPa",
     "humidity": "%",
     "light": "Lux",
-    "oxidised": "kO",
-    "reduced": "kO",
+    "oxidising": "kO",
+    "reducing": "kO",
     "nh3": "kO",
     "pm1": "ug/m3",
     "pm25": "ug/m3",
     "pm10": "ug/m3"}
-
+# list of variables
 variables = units.keys()
+# list of display variables
+disp_vars = ['compensated_temperature', 'pressure', 'humidity', 'light',
+             'oxidising', 'reducing', 'nh3', 'pm1', 'pm25', 'pm10']
 
+# main dictionary to store values. Each value is stored in a cricular
+# buffer so that averages can be returned as well as single values
+bufferLen = 10
 raw = dict()
 for variable in variables:
-    raw[variable] = 0.0
+    raw[variable] = deque(maxlen=bufferLen)
 
 # Define your own warning limits
 # The limits definition follows the order of the variables array
@@ -93,7 +109,7 @@ for variable in variables:
 # with NO WARRANTY. The authors of this example code claim
 # NO RESPONSIBILITY if reliance on the following values or this
 # code in general leads to ANY DAMAGES or DEATH.
-limits = {"temperature": [4, 18, 25, 35],
+limits = {"compensated_temperature": [4, 18, 25, 35],
           "pressure": [250, 650, 1013.25, 1015],
           "humidity": [20, 30, 60, 70],
           "light": [-1, -1, 30000, 100000],
@@ -110,19 +126,7 @@ palette = [(0, 0, 255),           # Dangerously Low
            (0, 255, 0),           # Normal
            (255, 255, 0),         # High
            (255, 0, 0)]           # Dangerously High
-values_lcd = {}
-
-
-# Read values from BME280 and PMS5003 and return as dict
-def read_values(comp_temp, mod_press, raw_humid, raw_pm25, raw_pm10):
-    values = {}
-    values["temperature"] = "{:.2f}".format(comp_temp)
-    values["pressure"] = "{:.2f}".format(mod_press)
-    values["humidity"] = "{:.2f}".format(raw_humid)
-    values["P2"] = str(raw_pm25)
-    values["P1"] = str(raw_pm10)
-    return values
-
+values_lcd = {} # this holds the past values for graphs
 
 # Get CPU temperature to use for compensation
 def get_cpu_temperature():
@@ -149,7 +153,7 @@ def check_wifi():
 
 
 # Create ST7735 LCD display class
-st7735 = ST7735.ST7735(
+lcd = ST7735.ST7735(
     port=0,
     cs=1,
     dc=9,
@@ -159,13 +163,10 @@ st7735 = ST7735.ST7735(
 )
 
 # Initialize display
-st7735.begin()
-
-WIDTH = st7735.width
-HEIGHT = st7735.height
+lcd.begin()
 
 # Set up canvas and font
-img = Image.new('RGB', (WIDTH, HEIGHT), color=(0, 0, 0))
+img = Image.new('RGB', (lcd.width, lcd.height), color=(0, 0, 0))
 draw = ImageDraw.Draw(img)
 font_size_small = 10
 font_size_large = 20
@@ -178,18 +179,6 @@ message = ""
 # The position of the top bar
 top_pos = 25
 
-# Saves the data to be used in the graphs later and prints to the log
-
-
-def save_data(idx, data):
-    variable = variables[idx]
-    # Maintain length of list
-    values_lcd[variable] = values_lcd[variable][1:] + [data]
-    unit = units[idx]
-    message = "{}: {:.1f} {}".format(variable[:4], data, unit)
-    logging.info(message)
-
-
 # Displays data and text on the 0.96" LCD
 def display_text(variable, data, unit):
     # Maintain length of list
@@ -201,36 +190,34 @@ def display_text(variable, data, unit):
                for v in values_lcd[variable]]
     # Format the variable name and value
     message = "{}: {:.1f} {}".format(variable[:4], data, unit)
-    logging.info(message)
-    draw.rectangle((0, 0, WIDTH, HEIGHT), (255, 255, 255))
+    #logging.info(message)
+    draw.rectangle((0, 0, lcd.width, lcd.height), (255, 255, 255))
     for i in range(len(colours)):
         # Convert the values to colours from red to blue
         colour = (1.0 - colours[i]) * 0.6
         r, g, b = [int(x * 255.0)
                    for x in colorsys.hsv_to_rgb(colour, 1.0, 1.0)]
         # Draw a 1-pixel wide rectangle of colour
-        draw.rectangle((i, top_pos, i + 1, HEIGHT), (r, g, b))
+        draw.rectangle((i, top_pos, i + 1, lcd.height), (r, g, b))
         # Draw a line graph in black
-        line_y = HEIGHT - \
-            (top_pos + (colours[i] * (HEIGHT - top_pos))) + top_pos
+        line_y = lcd.height - \
+            (top_pos + (colours[i] * (lcd.height - top_pos))) + top_pos
         draw.rectangle((i, line_y, i + 1, line_y + 1), (0, 0, 0))
     # Write the text at the top in black
     draw.text((0, 0), message, font=font, fill=(0, 0, 0))
-    st7735.display(img)
+    lcd.display(img)
 
 # Displays all the text on the 0.96" LCD
-
-
 def display_everything():
-    draw.rectangle((0, 0, WIDTH, HEIGHT), (0, 0, 0))
+    draw.rectangle((0, 0, lcd.width, lcd.height), (0, 0, 0))
     column_count = 2
-    row_count = (len(variables) / column_count)
-    for i in range(len(variables)):
-        variable = variables[i]
+    row_count = (len(disp_vars) / column_count)
+    for i in range(len(disp_vars)):
+        variable = disp_vars[i]
         data_value = values_lcd[variable][-1]
         unit = units[i]
-        x = x_offset + ((WIDTH // column_count) * (i // row_count))
-        y = y_offset + ((HEIGHT / row_count) * (i % row_count))
+        x = x_offset + ((lcd.width // column_count) * (i // row_count))
+        y = y_offset + ((lcd.height / row_count) * (i % row_count))
         message = "{}: {:.1f} {}".format(variable[:4], data_value, unit)
         lim = limits[i]
         rgb = palette[0]
@@ -238,17 +225,14 @@ def display_everything():
             if data_value > lim[j]:
                 rgb = palette[j + 1]
         draw.text((x, y), message, font=smallfont, fill=rgb)
-    st7735.display(img)
+    lcd.display(img)
 
-
-def send_to_luftdaten(values, id):
-    pm_values = dict(i for i in values.items() if i[0].startswith("P"))
-    temp_values = dict(i for i in values.items() if not i[0].startswith("P"))
-
-    pm_values_json = [{"value_type": key, "value": val}
-                      for key, val in pm_values.items()]
-    temp_values_json = [{"value_type": key, "value": val}
-                        for key, val in temp_values.items()]
+def send_to_luftdaten(sensor_id):
+    # format values according to luftdaten requirements
+    pm_values_json = [{"value_type": "P1", "value": np.mean(raw['pm10'])},
+                      {"value_type": "P2", "value": np.mean(raw['pm25'])}]
+    env_values_json = [{"value_type": t, "value": np.mean(raw[t])}
+                       for t in ["temperature", "pressure", "humidity"]]
 
     resp_1 = requests.post(
         "https://api.luftdaten.info/v1/push-sensor-data/",
@@ -258,7 +242,7 @@ def send_to_luftdaten(values, id):
         },
         headers={
             "X-PIN": "1",
-            "X-Sensor": id,
+            "X-Sensor": sensor_id,
             "Content-Type": "application/json",
             "cache-control": "no-cache"
         }
@@ -268,11 +252,11 @@ def send_to_luftdaten(values, id):
         "https://api.luftdaten.info/v1/push-sensor-data/",
         json={
             "software_version": "enviro-plus 0.0.1",
-            "sensordatavalues": temp_values_json
+            "sensordatavalues": env_values_json
         },
         headers={
             "X-PIN": "11",
-            "X-Sensor": id,
+            "X-Sensor": sensor_id,
             "Content-Type": "application/json",
             "cache-control": "no-cache"
         }
@@ -283,12 +267,64 @@ def send_to_luftdaten(values, id):
     else:
         return False
 
+# updates both the raw and the values_lcd circular buffers
+# the first are used for averages and the second for graphs
+# could be simplified if we assume the same lenght for both
+def update():
+    try:
+        val = get_cpu_temperature()
+        raw['cpu_temperature'].append(val)
+        val = sensors['bme280'].get_temperature()
+        raw['temperature'].append(val)
+        values_lcd['temperature'].append(val)
+        if not compensate_temperature:
+            comp_temp = val
+        else:
+            avg_cpu_temp = np.mean(raw['cpu_temperature'])
+            comp_temp = val - ((avg_cpu_temp - val) / comp_factor)
+        raw['compensated_temperature'].append(comp_temp)
+        values_lcd['compensated_temperature'].append(comp_temp)
+        val = sensors['bme280'].get_pressure()
+        raw['pressure'].append(val)
+        values_lcd['pressure'].append(val)
+        val = sensors['bme280'].get_humidity()
+        raw['humidity'].append(val)
+        values_lcd['humidity'].append(val)
+        val = sensors['ltr559'].get_lux()
+        raw['light'].append(val)
+        values_lcd['light'].append(val)
+        gas_data = seonsors['gas'].read_all()
+        val = gas_data.oxidising / 1000
+        raw['oxidising'].append(val)
+        values_lcd['oxidising'].append(val)
+        val = gas_data.reducing / 1000
+        raw['reducing'].append(val)
+        values_lcd['reducing'].append(val)
+        val = gas_data.nh3 / 1000
+        raw['nh3'].append(val)
+        values_lcd['nh3'].append(val)
+        try:
+            pm_values = pms5003.read()
+        except ReadTimeoutError:
+            pms5003.reset()
+            pm_values = pms5003.read()
+        val = pm_values.pm_ug_per_m3(1.0)
+        raw['pm1'].append(val)
+        values_lcd['pm1'].append(val)
+        val = pm_values.pm_ug_per_m3(2.5)
+        raw['pm25'].append(val)
+        values_lcd['pm25'].append(val)
+        val = pm_values.pm_ug_per_m3(10)
+        raw['pm10'].append(val)
+        values_lcd['pm10'].append(val)
+    except Exception as e:
+        print(e)
 
 # Compensation factor for temperature
 comp_factor = 1
 
 # Raspberry Pi ID to send to Luftdaten
-id = "raspi-" + get_serial_number()
+sensor_id = id_prefix + get_serial_number()
 
 
 # Added for state
@@ -298,14 +334,13 @@ last_page = 0
 light = 1
 
 
-for v in variables:
-    values_lcd[v] = [1] * WIDTH
+for v in disp_vars:
+    values_lcd[v] = deque(maxlen=lcd.width)
 
 
 # Text settings
 font_size = 16
 font = ImageFont.truetype(UserFont, font_size)
-cpu_temps = [get_cpu_temperature()] * 5
 
 # Display Raspberry Pi serial and Wi-Fi status
 print("Raspberry Pi serial: {}".format(get_serial_number()))
@@ -313,7 +348,6 @@ print("Wi-Fi: {}\n".format("connected" if check_wifi() else "disconnected"))
 
 time_since_update = 0
 update_time = time.time()
-cpu_temps_len = float(len(cpu_temps))
 
 # Main loop to read data, display, and send to Luftdaten
 while True:
@@ -321,122 +355,29 @@ while True:
         curtime = time.time()
         time_since_update = curtime - update_time
 
-        # Calculate these things once, not twice
-        cpu_temp = get_cpu_temperature()
-        # Smooth out with some averaging to decrease jitter
-        cpu_temps = cpu_temps[1:] + [cpu_temp]
-        avg_cpu_temp = sum(cpu_temps) / cpu_temps_len
-        raw_temp = bme280.get_temperature()
-        comp_temp = raw_temp - ((avg_cpu_temp - raw_temp) / comp_factor)
-
-        raw_press = bme280.get_pressure()
-        raw_humid = bme280.get_humidity()
-        try:
-            pm_values = pms5003.read()
-            raw_pm25 = pm_values.pm_ug_per_m3(2.5)
-            raw_pm10 = pm_values.pm_ug_per_m3(10)
-        except ReadTimeoutError:
-            pms5003.reset()
-            pm_values = pms5003.read()
-            raw_pm25 = pm_values.pm_ug_per_m3(2.5)
-            raw_pm10 = pm_values.pm_ug_per_m3(10)
+        update()
 
         if time_since_update > 145:
-            values = read_values(comp_temp, raw_press*100,
-                                 raw_humid, raw_pm25, raw_pm10)
-            resp = send_to_luftdaten(values, id)
+            resp = send_to_luftdaten(sensor_id)
             update_time = curtime
             print("Response: {}\n".format("ok" if resp else "failed"))
 
         # Now comes the combined.py functionality:
         # If the proximity crosses the threshold, toggle the mode
-        proximity = ltr559.get_proximity()
+        proximity = sensors['ltr559'].get_proximity()
         if proximity > 1500 and curtime - last_page > delay:
             mode = (mode + 1) % 11
             last_page = curtime
-        # One mode for each variable
-        if mode == 0:
-            # variable = "temperature"
-            unit = "C"
-            display_text(variables[mode], comp_temp, unit)
-
-        if mode == 1:
-            # variable = "pressure"
-            unit = "hPa"
-            display_text(variables[mode], raw_press, unit)
-
-        if mode == 2:
-            # variable = "humidity"
-            unit = "%"
-            display_text(variables[mode], raw_humid, unit)
-
-        if mode == 3:
-            # variable = "light"
-            unit = "Lux"
-            if proximity < 10:
-                data = ltr559.get_lux()
-            else:
-                data = 1
-            display_text(variables[mode], data, unit)
-
-        if mode == 4:
-            # variable = "oxidised"
-            unit = "kO"
-            data = gas.read_all()
-            data = data.oxidising / 1000
-            display_text(variables[mode], data, unit)
-
-        if mode == 5:
-            # variable = "reduced"
-            unit = "kO"
-            data = gas.read_all()
-            data = data.reducing / 1000
-            display_text(variables[mode], data, unit)
-
-        if mode == 6:
-            # variable = "nh3"
-            unit = "kO"
-            data = gas.read_all()
-            data = data.nh3 / 1000
-            display_text(variables[mode], data, unit)
-
-        if mode == 7:
-            # variable = "pm1"
-            unit = "ug/m3"
-            data = float(pm_values.pm_ug_per_m3(1.0))
-            display_text(variables[mode], data, unit)
-
-        if mode == 8:
-            # variable = "pm25"
-            unit = "ug/m3"
-            display_text(variables[mode], float(raw_pm25), unit)
-
-        if mode == 9:
-            # variable = "pm10"
-            unit = "ug/m3"
-            display_text(variables[mode], float(raw_pm10), unit)
-
+        var_name = disp_vars[mode]
+        # first take care of exceptions
         if mode == 10:
             # Everything on one screen
-            save_data(0, comp_temp)
-            save_data(1, raw_press)
             display_everything()
-            save_data(2, raw_humid)
-            if proximity < 10:
-                raw_data = ltr559.get_lux()
-            else:
-                raw_data = 1
-            save_data(3, raw_data)
-            display_everything()
-            gas_data = gas.read_all()
-            save_data(4, gas_data.oxidising / 1000)
-            save_data(5, gas_data.reducing / 1000)
-            save_data(6, gas_data.nh3 / 1000)
-            display_everything()
-            pms_data = None
-            save_data(7, float(pm_values.pm_ug_per_m3(1.0)))
-            save_data(8, float(raw_pm25))
-            save_data(9, float(raw_pm10))
-            display_everything()
+            continue
+
+        # this is the normal case (pressure, humidity, oxidising,
+        # reducing, nh3, pm1, pm25, pm10)
+        display_text(var_name, raw[var_name][0], unit[var_name])
+
     except Exception as e:
         print(e)
