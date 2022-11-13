@@ -61,6 +61,7 @@ Press Ctrl+C to exit!
 
 # prefix to the sensor ID for upload to luftdaten
 id_prefix = 'esp8266-'
+log_path = "~/MEGA/air_quality/"
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s',
@@ -213,12 +214,21 @@ while True:
         curtime = time.time()
         time_since_update = curtime - update_time
 
+        # update circular arrays
         update()
-
+        
         if time_since_update > 145:
+            # write to local file
+            filename = log_path + sensor_id + '_' + time.strftime('%Y-%M-%d') + '.csv'
+            # opening and closing ensures we write in the right file past midnight
+            f = open(filename, 'a')
+            data = [np.mean(raw[v]) for v in variables]
+            f.write(','.join(str(val) for val in data))
+            f.write('\n')
+            f.close()
+            # upload values to luftdaten
             resp = send_to_luftdaten(sensor_id)
             update_time = curtime
             print("Response: {}\n".format("ok" if resp else "failed"))
-
     except Exception as e:
         print(e)
