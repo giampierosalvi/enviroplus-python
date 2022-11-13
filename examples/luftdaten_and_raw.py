@@ -85,9 +85,6 @@ units = {
     "pm10": "ug/m3"}
 # list of variables
 variables = units.keys()
-# list of display variables
-disp_vars = ['compensated_temperature', 'pressure', 'humidity', 'light',
-             'oxidising', 'reducing', 'nh3', 'pm1', 'pm25', 'pm10']
 
 # main dictionary to store values. Each value is stored in a cricular
 # buffer so that averages can be returned as well as single values
@@ -95,38 +92,6 @@ bufferLen = 10
 raw = dict()
 for variable in variables:
     raw[variable] = deque(maxlen=bufferLen)
-
-# Define your own warning limits
-# The limits definition follows the order of the variables array
-# Example limits explanation for temperature:
-# [4,18,28,35] means
-# [-273.15 .. 4] -> Dangerously Low
-# (4 .. 18]      -> Low
-# (18 .. 28]     -> Normal
-# (28 .. 35]     -> High
-# (35 .. MAX]    -> Dangerously High
-# DISCLAIMER: The limits provided here are just examples and come
-# with NO WARRANTY. The authors of this example code claim
-# NO RESPONSIBILITY if reliance on the following values or this
-# code in general leads to ANY DAMAGES or DEATH.
-limits = {"compensated_temperature": [4, 18, 25, 35],
-          "pressure": [250, 650, 1013.25, 1015],
-          "humidity": [20, 30, 60, 70],
-          "light": [-1, -1, 30000, 100000],
-          "oxidised": [-1, -1, 40, 50],
-          "reduced": [-1, -1, 450, 550],
-          "nh3": [-1, -1, 200, 300],
-          "pm1": [-1, -1, 50, 100],
-          "pm25": [-1, -1, 50, 100],
-          "pm10": [-1, -1, 50, 100]}
-
-# RGB palette for values on the combined screen
-palette = [(0, 0, 255),           # Dangerously Low
-           (0, 255, 255),         # Low
-           (0, 255, 0),           # Normal
-           (255, 255, 0),         # High
-           (255, 0, 0)]           # Dangerously High
-values_lcd = {} # this holds the past values for graphs
 
 # Get CPU temperature to use for compensation
 def get_cpu_temperature():
@@ -150,82 +115,6 @@ def check_wifi():
         return True
     else:
         return False
-
-
-# Create ST7735 LCD display class
-lcd = ST7735.ST7735(
-    port=0,
-    cs=1,
-    dc=9,
-    backlight=12,
-    rotation=270,
-    spi_speed_hz=10000000
-)
-
-# Initialize display
-lcd.begin()
-
-# Set up canvas and font
-img = Image.new('RGB', (lcd.width, lcd.height), color=(0, 0, 0))
-draw = ImageDraw.Draw(img)
-font_size_small = 10
-font_size_large = 20
-font = ImageFont.truetype(UserFont, font_size_large)
-smallfont = ImageFont.truetype(UserFont, font_size_small)
-x_offset = 2
-y_offset = 2
-message = ""
-
-# The position of the top bar
-top_pos = 25
-
-# Displays data and text on the 0.96" LCD
-def display_text(variable, data, unit):
-    # Maintain length of list
-    values_lcd[variable] = values_lcd[variable][1:] + [data]
-    # Scale the values for the variable between 0 and 1
-    vmin = min(values_lcd[variable])
-    vmax = max(values_lcd[variable])
-    colours = [(v - vmin + 1) / (vmax - vmin + 1)
-               for v in values_lcd[variable]]
-    # Format the variable name and value
-    message = "{}: {:.1f} {}".format(variable[:4], data, unit)
-    #logging.info(message)
-    draw.rectangle((0, 0, lcd.width, lcd.height), (255, 255, 255))
-    for i in range(len(colours)):
-        # Convert the values to colours from red to blue
-        colour = (1.0 - colours[i]) * 0.6
-        r, g, b = [int(x * 255.0)
-                   for x in colorsys.hsv_to_rgb(colour, 1.0, 1.0)]
-        # Draw a 1-pixel wide rectangle of colour
-        draw.rectangle((i, top_pos, i + 1, lcd.height), (r, g, b))
-        # Draw a line graph in black
-        line_y = lcd.height - \
-            (top_pos + (colours[i] * (lcd.height - top_pos))) + top_pos
-        draw.rectangle((i, line_y, i + 1, line_y + 1), (0, 0, 0))
-    # Write the text at the top in black
-    draw.text((0, 0), message, font=font, fill=(0, 0, 0))
-    lcd.display(img)
-
-# Displays all the text on the 0.96" LCD
-def display_everything():
-    draw.rectangle((0, 0, lcd.width, lcd.height), (0, 0, 0))
-    column_count = 2
-    row_count = (len(disp_vars) / column_count)
-    for i in range(len(disp_vars)):
-        variable = disp_vars[i]
-        data_value = values_lcd[variable][-1]
-        unit = units[i]
-        x = x_offset + ((lcd.width // column_count) * (i // row_count))
-        y = y_offset + ((lcd.height / row_count) * (i % row_count))
-        message = "{}: {:.1f} {}".format(variable[:4], data_value, unit)
-        lim = limits[i]
-        rgb = palette[0]
-        for j in range(len(lim)):
-            if data_value > lim[j]:
-                rgb = palette[j + 1]
-        draw.text((x, y), message, font=smallfont, fill=rgb)
-    lcd.display(img)
 
 def send_to_luftdaten(sensor_id):
     # format values according to luftdaten requirements
@@ -267,56 +156,33 @@ def send_to_luftdaten(sensor_id):
     else:
         return False
 
-# updates both the raw and the values_lcd circular buffers
-# the first are used for averages and the second for graphs
-# could be simplified if we assume the same lenght for both
+# collects data from sensors and updates raw circular buffers used for averages
+# throws and exception if any of the sensors fails to return values.
 def update():
     try:
-        val = get_cpu_temperature()
-        raw['cpu_temperature'].append(val)
-        val = sensors['bme280'].get_temperature()
-        raw['temperature'].append(val)
-        values_lcd['temperature'].append(val)
+        raw['cpu_temperature'].append(get_cpu_temperature())
+        raw['temperature'].append(sensors['bme280'].get_temperature())
         if not compensate_temperature:
-            comp_temp = val
+            comp_temp = raw['temperature'][-1] # <- check if this is the last index
         else:
             avg_cpu_temp = np.mean(raw['cpu_temperature'])
             comp_temp = val - ((avg_cpu_temp - val) / comp_factor)
         raw['compensated_temperature'].append(comp_temp)
-        values_lcd['compensated_temperature'].append(comp_temp)
-        val = sensors['bme280'].get_pressure()
-        raw['pressure'].append(val)
-        values_lcd['pressure'].append(val)
-        val = sensors['bme280'].get_humidity()
-        raw['humidity'].append(val)
-        values_lcd['humidity'].append(val)
-        val = sensors['ltr559'].get_lux()
-        raw['light'].append(val)
-        values_lcd['light'].append(val)
+        raw['pressure'].append(sensors['bme280'].get_pressure())
+        raw['humidity'].append(sensors['bme280'].get_humidity())
+        raw['light'].append(sensors['ltr559'].get_lux())
         gas_data = seonsors['gas'].read_all()
-        val = gas_data.oxidising / 1000
-        raw['oxidising'].append(val)
-        values_lcd['oxidising'].append(val)
-        val = gas_data.reducing / 1000
-        raw['reducing'].append(val)
-        values_lcd['reducing'].append(val)
-        val = gas_data.nh3 / 1000
-        raw['nh3'].append(val)
-        values_lcd['nh3'].append(val)
+        raw['oxidising'].append(gas_data.oxidising / 1000)
+        raw['reducing'].append(gas_data.reducing / 1000)
+        raw['nh3'].append(gas_data.nh3 / 1000)
         try:
             pm_values = pms5003.read()
         except ReadTimeoutError:
             pms5003.reset()
             pm_values = pms5003.read()
-        val = pm_values.pm_ug_per_m3(1.0)
-        raw['pm1'].append(val)
-        values_lcd['pm1'].append(val)
-        val = pm_values.pm_ug_per_m3(2.5)
-        raw['pm25'].append(val)
-        values_lcd['pm25'].append(val)
-        val = pm_values.pm_ug_per_m3(10)
-        raw['pm10'].append(val)
-        values_lcd['pm10'].append(val)
+        raw['pm1'].append(pm_values.pm_ug_per_m3(1.0))
+        raw['pm25'].append(pm_values.pm_ug_per_m3(2.5))
+        raw['pm10'].append(pm_values.pm_ug_per_m3(10))
     except Exception as e:
         print(e)
 
@@ -333,14 +199,6 @@ mode = 10     # The starting mode
 last_page = 0
 light = 1
 
-
-for v in disp_vars:
-    values_lcd[v] = deque(maxlen=lcd.width)
-
-
-# Text settings
-font_size = 16
-font = ImageFont.truetype(UserFont, font_size)
 
 # Display Raspberry Pi serial and Wi-Fi status
 print("Raspberry Pi serial: {}".format(get_serial_number()))
@@ -361,23 +219,6 @@ while True:
             resp = send_to_luftdaten(sensor_id)
             update_time = curtime
             print("Response: {}\n".format("ok" if resp else "failed"))
-
-        # Now comes the combined.py functionality:
-        # If the proximity crosses the threshold, toggle the mode
-        proximity = sensors['ltr559'].get_proximity()
-        if proximity > 1500 and curtime - last_page > delay:
-            mode = (mode + 1) % 11
-            last_page = curtime
-        var_name = disp_vars[mode]
-        # first take care of exceptions
-        if mode == 10:
-            # Everything on one screen
-            display_everything()
-            continue
-
-        # this is the normal case (pressure, humidity, oxidising,
-        # reducing, nh3, pm1, pm25, pm10)
-        display_text(var_name, raw[var_name][0], unit[var_name])
 
     except Exception as e:
         print(e)
