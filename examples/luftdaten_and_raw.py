@@ -1,13 +1,16 @@
 import logging
 import sys
+import os
 import requests
 import ST7735 # LCD display
 import time
+from datetime import datetime # to simplify iso format
 import colorsys
 from subprocess import PIPE, Popen, check_output
 from PIL import Image, ImageDraw, ImageFont
 from fonts.ttf import RobotoMedium as UserFont
 from collections import deque # to implement circular bufffer for moving average
+import numpy as np
 
 # import sensors ========================================================
 from bme280 import BME280
@@ -17,6 +20,7 @@ try:
     from smbus2 import SMBus
 except ImportError:
     from smbus import SMBus
+sensors = dict() # holds sensor objects
 try:
     # Transitional fix for breaking change in LTR559
     from ltr559 import LTR559
@@ -25,7 +29,7 @@ except ImportError:
     import ltr559
     sensors['ltr559'] = ltr559()
 
-sensors['gas'] = gas()
+sensors['gas'] = gas # this is a module, copy module name
 bus = SMBus(1)
 sensors['bme280'] = BME280(i2c_dev=bus)
 sensors['pms5003'] = PMS5003()
@@ -61,7 +65,7 @@ Press Ctrl+C to exit!
 
 # prefix to the sensor ID for upload to luftdaten
 id_prefix = 'esp8266-'
-log_path = "~/MEGA/air_quality/"
+log_path = "/home/pi/MEGA/air_quality/"
 
 logging.basicConfig(
     format='%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s',
@@ -74,7 +78,7 @@ logging.info(""" """)
 units = {
     "cpu_temperature": "C",
     "temperature": "C",
-    "compensated_temperature": "C"
+    "compensated_temperature": "C",
     "pressure": "hPa",
     "humidity": "%",
     "light": "Lux",
@@ -87,9 +91,11 @@ units = {
 # list of variables
 variables = units.keys()
 
+header = "time (iso),"+",".join(var+" ("+units[var]+")" for var in variables)
+
 # main dictionary to store values. Each value is stored in a cricular
 # buffer so that averages can be returned as well as single values
-bufferLen = 10
+bufferLen = 60 # this roughly correspond to seconds
 raw = dict()
 for variable in variables:
     raw[variable] = deque(maxlen=bufferLen)
@@ -157,6 +163,8 @@ def send_to_luftdaten(sensor_id):
     else:
         return False
 
+compensate_temperature = False
+    
 # collects data from sensors and updates raw circular buffers used for averages
 # throws and exception if any of the sensors fails to return values.
 def update():
@@ -172,15 +180,15 @@ def update():
         raw['pressure'].append(sensors['bme280'].get_pressure())
         raw['humidity'].append(sensors['bme280'].get_humidity())
         raw['light'].append(sensors['ltr559'].get_lux())
-        gas_data = seonsors['gas'].read_all()
+        gas_data = sensors['gas'].read_all()
         raw['oxidising'].append(gas_data.oxidising / 1000)
         raw['reducing'].append(gas_data.reducing / 1000)
         raw['nh3'].append(gas_data.nh3 / 1000)
         try:
-            pm_values = pms5003.read()
+            pm_values = sensors['pms5003'].read()
         except ReadTimeoutError:
-            pms5003.reset()
-            pm_values = pms5003.read()
+            sensors['pms5003'].reset()
+            pm_values = sensors['pms5003'].read()
         raw['pm1'].append(pm_values.pm_ug_per_m3(1.0))
         raw['pm25'].append(pm_values.pm_ug_per_m3(2.5))
         raw['pm10'].append(pm_values.pm_ug_per_m3(10))
@@ -215,20 +223,32 @@ while True:
         time_since_update = curtime - update_time
 
         # update circular arrays
+        print(datetime.now().isoformat(), ": updating")
         update()
+
+        #print(datetime.now().isoformat())
+        #for var in variables:
+        #    print(var, raw[var][-1], units[var])
+        #    #print(var, "{:.2f}".format(raw[var][-1]), units[var])
         
-        if time_since_update > 145:
+        if time_since_update > bufferLen: # 145:
+            update_time = curtime # do first to make sure it's done
+            print(datetime.now().isoformat(), ": saving to local file")
             # write to local file
-            filename = log_path + sensor_id + '_' + time.strftime('%Y-%M-%d') + '.csv'
+            filename = log_path + sensor_id + '_' + time.strftime('%Y-%m-%d') + '.csv'
+            if not os.path.exists(filename):
+                with open(filename, 'w') as f:
+                    f.write(header+'\n')
             # opening and closing ensures we write in the right file past midnight
             f = open(filename, 'a')
             data = [np.mean(raw[v]) for v in variables]
-            f.write(','.join(str(val) for val in data))
+            f.write(datetime.now().isoformat()+',')
+            f.write(','.join("{:.2f}".format(val) for val in data))
             f.write('\n')
             f.close()
             # upload values to luftdaten
+            print(datetime.now().isoformat(), ": uploading to luftdaten")
             resp = send_to_luftdaten(sensor_id)
-            update_time = curtime
             print("Response: {}\n".format("ok" if resp else "failed"))
     except Exception as e:
         print(e)
