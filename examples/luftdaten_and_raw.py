@@ -125,7 +125,8 @@ def check_wifi():
 
 def send_to_luftdaten(sensor_id):
     # format values according to luftdaten requirements
-    pm_values_json = [{"value_type": "P1", "value": np.mean(raw['pm10'])},
+    pm_values_json = [{"value_type": "P0", "value": np.mean(raw['pm1'])},
+                      {"value_type": "P1", "value": np.mean(raw['pm10'])},
                       {"value_type": "P2", "value": np.mean(raw['pm25'])}]
     #env_values_json = [{"value_type": t, "value": np.mean(raw[t])}
     #                   for t in ["temperature", "pressure", "humidity"]]
