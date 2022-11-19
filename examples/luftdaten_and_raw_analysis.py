@@ -42,9 +42,7 @@ data['dayofyear'] = pd.DatetimeIndex(data['datetime']).dayofyear
 data['hour'] = pd.DatetimeIndex(data['datetime']).hour
 data
 
-data['datetime'].max()
-
-# check weather data against meteostat
+# check weather data against meteostat (https://dev.meteostat.net/)
 from meteostat import Point, Hourly
 from datetime import datetime
 start = data['datetime'].min()
