@@ -130,6 +130,9 @@ def send_to_luftdaten(sensor_id):
     env_values_json = [{"value_type": t, "value": np.mean(raw[t])}
                        for t in ["temperature", "pressure", "humidity"]]
 
+    # luftdaten wants pressure in Pa instead of hPa
+    env_values_json['pressure'] *= 100
+
     resp_1 = requests.post(
         "https://api.luftdaten.info/v1/push-sensor-data/",
         json={
