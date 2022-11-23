@@ -77,7 +77,7 @@ station
 # a 12 hPa increase. Because Stadsing Dahls gate 21 is about 50m on the sea level,
 # we expect a difference of 6 hPa which is exactly what we observe. 
 fig, axs = plt.subplots(3, 1, figsize=(8, 18))
-sns.lineplot(data=data, x='time (iso)', y='cpu_temperature (C)', label='cpu', ax=axs[0])
+#sns.lineplot(data=data, x='time (iso)', y='cpu_temperature (C)', label='cpu', ax=axs[0])
 sns.lineplot(data=data, x='time (iso)', y='temperature (C)', label='home sensor', ax=axs[0])
 sns.lineplot(data=meteostatdf, x='time', y='temp', label='meteostat', ax=axs[0])
 sns.lineplot(data=data, x='time (iso)', y='humidity (%)', label='home sensor', ax=axs[1])
@@ -85,6 +85,12 @@ sns.lineplot(data=meteostatdf, x='time', y='rhum', label='meteostat', ax=axs[1])
 sns.lineplot(data=data, x='time (iso)', y='pressure (hPa)', label='home sensor', ax=axs[2])
 sns.lineplot(data=data, x='time (iso)', y='pressure sea level (hPa)', label='home sensor (sea level)', ax=axs[2])
 sns.lineplot(data=meteostatdf, x='time', y='pres', label='meteostat (sea level)', ax=axs[2])
+
+#t1 = data['temperature (C)'].to_numpy()
+#t2 = meteostatdf['temp'].to_numpy()
+#W_est = np.linalg.pinv(t1.T).dot(t2.T).T
+plt.plot(data['temperature (C)']-7)
+plt.plot(meteostatdf['temp'])
 
 # complete series
 #fig, axs = plt.subplots(2, 2, figsize=(16, 12))
@@ -97,13 +103,17 @@ sns.lineplot(data=data, x='time (iso)', y='pm10 (ug/m3)', label="PM10")
 #axs[1][0].set_title('PM 10')
 plt.ylabel('ug/m3')
 
-
 # +
-def plotVsTimeOfDay(df=None, var=None, ax=None):
+from scipy.signal import savgol_filter
+def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False):
     for date in df['date'].unique():
         bydate = df[df['date']==date]
         y = bydate[var].to_numpy()
+        if smooth:
+            y = savgol_filter(y, 51, 3)
         x = [t.hour*3600 + t.minute*60 + t.second for t in bydate['timeofday']]
+        if ax==None:
+            ax = plt.gca()
         ax.plot(x, y, alpha=0.7, label=date)
         xticks = np.arange(25)*3600
         ax.set_xticks(xticks, labels = [str(int(xtick/3600)) for xtick in xticks])
@@ -113,9 +123,10 @@ def plotVsTimeOfDay(df=None, var=None, ax=None):
 
 # series vs time of day
 fig, axs = plt.subplots(3, 1, figsize=(8, 18))
-plotVsTimeOfDay(data, 'pm1 (ug/m3)', axs[0])
-plotVsTimeOfDay(data, 'pm25 (ug/m3)', axs[1])
-plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2])
+smooth = False
+plotVsTimeOfDay(data, 'pm1 (ug/m3)', axs[0], smooth)
+plotVsTimeOfDay(data, 'pm25 (ug/m3)', axs[1], smooth)
+plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2], smooth)
 #bydate = data.copy()
 #bydate.set_index('timeofday')
 #bydate = bydate.groupby('date')
@@ -146,6 +157,24 @@ axs[2].set_title('PM 10')
 
 sns.lineplot(data=data, x='time (iso)', y='humidity (%)')
 
+# PM2.5 vs temperature
+ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax2 = ax1.twinx()
+sns.lineplot(data=data, x='time (iso)', y='temperature (C)', ax=ax2, color='r')
 
+# PM2.5 vs temperature
+ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax2 = ax1.twinx()
+sns.lineplot(data=meteostatdf, x='time', y='temp', ax=ax2, color='r')
+
+# PM2.5 vs temperature
+ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax2 = ax1.twinx()
+sns.lineplot(data=meteostatdf, x='time', y='wspd', ax=ax2, color='r')
+
+# PM2.5 vs temperature
+ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax2 = ax1.twinx()
+sns.lineplot(data=meteostatdf, x='time', y='wdir', ax=ax2, color='r')
 
 
