@@ -21,12 +21,13 @@ from matplotlib import pyplot as plt
 import seaborn as sns
 import os
 import re
+import glob
 
 # read data from multiple files
 dataroot = os.path.expanduser('~/MEGA/air_quality')
 sensorID = 'esp8266-100000008faa2b38'
-# open either csv.gz or .csv files
-datafiles = [os.path.join(dataroot, f) for f in os.listdir(dataroot) if re.match(sensorID+r'.*\.csv(.gz)?', f)]
+filepattern = '.*'+sensorID+r'.*\.csv(.gz)?$' # match both .csv and .csv.gz files
+datafiles = [f for f in glob.glob(dataroot+'/**', recursive=True) if re.match(filepattern, f)]
 datafiles.sort()
 first = True
 for csvfile in datafiles:
@@ -51,7 +52,7 @@ outlieridxs = [idx+1 for idx in np.where(p[1:]-p[:-1]<-5)]
 for idx in outlieridxs:
     data.loc[data.index[idx], 'pressure (hPa)'] = (p[idx-1]+p[idx+1])/2
 # calculate pressure at sea level
-data['pressure sea level (hPa)'] = data['pressure (hPa)'] + 12 * 0.47
+data['pressure sea level (hPa)'] = data['pressure (hPa)'] + 12 * 0.48
 data
 
 # check weather data against meteostat (https://dev.meteostat.net/)
@@ -59,7 +60,7 @@ from meteostat import Point, Hourly
 from datetime import datetime
 start = data.index.min()
 end = data.index.max()
-location = Point(63.43107136658, 10.421607421317301, 45) # Stadsing Dahls gate 21
+location = Point(63.43107136658, 10.421607421317301, 47) # Stadsing Dahls gate 21
 # Get hourly data
 meteostatdata = Hourly(location, start, end)
 meteostatdf = meteostatdata.fetch()
@@ -89,24 +90,31 @@ sns.lineplot(data=meteostatdf, x='time', y='pres', label='meteostat (sea level)'
 #t1 = data['temperature (C)'].to_numpy()
 #t2 = meteostatdf['temp'].to_numpy()
 #W_est = np.linalg.pinv(t1.T).dot(t2.T).T
-plt.plot(data['temperature (C)']-7)
+plt.plot(data['temperature (C)']-3)
 plt.plot(meteostatdf['temp'])
 
 # complete series
 #fig, axs = plt.subplots(2, 2, figsize=(16, 12))
-fig = plt.figure(figsize=(12, 8))
-sns.lineplot(data=data, x='time (iso)', y='pm1 (ug/m3)', label="PM1.0")
-#axs[0][0].set_title('PM 1.0')
-sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)', label="PM2.5")
-#axs[0][1].set_title('PM 2.5')
-sns.lineplot(data=data, x='time (iso)', y='pm10 (ug/m3)', label="PM10")
-#axs[1][0].set_title('PM 10')
-plt.ylabel('ug/m3')
+fig, axs = plt.subplots(3, 1, figsize=(12, 12))
+sns.lineplot(data=data, x='time (iso)', y='pm1 (ug/m3)', ax=axs[0])
+axs[0].set_ylabel('ug/m3')
+axs[0].set_xlabel('')
+axs[0].set_title('PM 1.0')
+sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)', ax=axs[1])
+axs[1].set_ylabel('ug/m3')
+axs[1].set_xlabel('')
+axs[1].set_title('PM 2.5')
+sns.lineplot(data=data, x='time (iso)', y='pm10 (ug/m3)', ax=axs[2])
+axs[2].set_ylabel('ug/m3')
+axs[2].set_title('PM 10')
 
 # +
 from scipy.signal import savgol_filter
 def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False):
+    lastday = df['date'][-1]
     for date in df['date'].unique():
+        if (lastday-date).days > 7: # only show last week
+            continue
         bydate = df[df['date']==date]
         y = bydate[var].to_numpy()
         if smooth:
@@ -122,8 +130,8 @@ def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False):
         ax.legend()
 
 # series vs time of day
-fig, axs = plt.subplots(3, 1, figsize=(8, 18))
-smooth = False
+fig, axs = plt.subplots(3, 1, figsize=(12, 18))
+smooth = True
 plotVsTimeOfDay(data, 'pm1 (ug/m3)', axs[0], smooth)
 plotVsTimeOfDay(data, 'pm25 (ug/m3)', axs[1], smooth)
 plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2], smooth)
@@ -141,40 +149,78 @@ plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2], smooth)
 # -
 
 # series vs hour (data from different minutes and days are mixed)
-fig, axs = plt.subplots(3, 1, figsize=(8, 18))
+fig, axs = plt.subplots(3, 1, figsize=(16, 18))
 sns.boxplot(data=data, x='hour', y='pm1 (ug/m3)', ax=axs[0])
 axs[0].set_xticks(np.arange(24))
 axs[0].grid()
 axs[0].set_title('PM 1.0')
+axs[0].set_ylim([0, 100])
 sns.boxplot(data=data, x='hour', y='pm25 (ug/m3)', ax=axs[1])
 axs[1].set_xticks(np.arange(24))
 axs[1].grid()
 axs[1].set_title('PM 2.5')
+axs[1].set_ylim([0, 200])
 sns.boxplot(data=data, x='hour', y='pm10 (ug/m3)', ax=axs[2])
 axs[2].set_xticks(np.arange(24))
 axs[2].grid()
 axs[2].set_title('PM 10')
+axs[2].set_ylim([0, 200])
+
+# series vs hour (data from different minutes and days are mixed)
+fig, axs = plt.subplots(3, 1, figsize=(16, 18))
+sns.violinplot(data=data, x='hour', y='pm1 (ug/m3)', ax=axs[0], scale='width')
+axs[0].set_xticks(np.arange(24))
+axs[0].grid()
+axs[0].set_title('PM 1.0')
+axs[0].set_ylim([0, 100])
+sns.violinplot(data=data, x='hour', y='pm25 (ug/m3)', ax=axs[1], scale='width')
+axs[1].set_xticks(np.arange(24))
+axs[1].grid()
+axs[1].set_title('PM 2.5')
+axs[1].set_ylim([0, 200])
+sns.violinplot(data=data, x='hour', y='pm10 (ug/m3)', ax=axs[2], scale='width')
+axs[2].set_xticks(np.arange(24))
+axs[2].grid()
+axs[2].set_title('PM 10')
+axs[2].set_ylim([0, 200])
 
 sns.lineplot(data=data, x='time (iso)', y='humidity (%)')
 
 # PM2.5 vs temperature
+plt.figure(figsize=(16,4))
 ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax1.set_ylim([0, 200])
 ax2 = ax1.twinx()
 sns.lineplot(data=data, x='time (iso)', y='temperature (C)', ax=ax2, color='r')
 
 # PM2.5 vs temperature
+plt.figure(figsize=(16,4))
 ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax1.set_ylim([0, 200])
 ax2 = ax1.twinx()
 sns.lineplot(data=meteostatdf, x='time', y='temp', ax=ax2, color='r')
 
-# PM2.5 vs temperature
+# PM2.5 vs wind speed
+plt.figure(figsize=(16,4))
 ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax1.set_ylim([0, 200])
 ax2 = ax1.twinx()
 sns.lineplot(data=meteostatdf, x='time', y='wspd', ax=ax2, color='r')
+ax2.set_ylabel('wind speed (m/s)')
 
-# PM2.5 vs temperature
+# PM2.5 vs wind direction
+plt.figure(figsize=(16,4))
 ax1 = sns.lineplot(data=data, x='time (iso)', y='pm25 (ug/m3)')
+ax1.set_ylim([0, 200])
 ax2 = ax1.twinx()
 sns.lineplot(data=meteostatdf, x='time', y='wdir', ax=ax2, color='r')
+ax2.set_ylabel('wind direction (degrees)')
+
+meteostatdf_reindex = meteostatdf.reindex(index=data.index)
+#data['wind speed (m/s)'] = meteostatdf['wspd'].interpolate('cubic')
+#sns.kdeplot(data=data, x="waiting", y="duration")
+
+#meteostatdf_reindex.interpolate('cubic')
+meteostatdf
 
 

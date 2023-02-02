@@ -240,7 +240,10 @@ while True:
             update_time = curtime # do first to make sure it's done
             print(datetime.now().isoformat(), ": saving to local file")
             # write to local file
-            filename = log_path + sensor_id + '_' + time.strftime('%Y-%m-%d') + '.csv'
+            current_path = log_path + time.strftime('%Y') + '/'
+            if not os.path.exists(current_path):
+                os.mkdir(current_path)
+            filename = current_path + sensor_id + '_' + time.strftime('%Y-%m-%d') + '.csv'
             if not os.path.exists(filename):
                 with open(filename, 'w') as f:
                     f.write(header+'\n')
@@ -251,6 +254,9 @@ while True:
             f.write(','.join("{:.2f}".format(val) for val in data))
             f.write('\n')
             f.close()
+            # here we should check if an unzipped previous file exists and zip it
+            # we could work with zipped files directly, but it is more likely to
+            # loose all the data if something goes wrong.
             # upload values to luftdaten
             print(datetime.now().isoformat(), ": uploading to luftdaten")
             resp = send_to_luftdaten(sensor_id)
