@@ -240,16 +240,18 @@ while True:
             update_time = curtime # do first to make sure it's done
             print(datetime.now().isoformat(), ": saving to local file")
             # write to local file
-            current_path = log_path + time.strftime('%Y') + '/'
+            today = date.today()
+            current_path = log_path + today.year + '/'
             if not os.path.exists(current_path):
                 os.mkdir(current_path)
-            filename = current_path + sensor_id + '_' + str(date.today()) + '.csv'
+            filename = current_path + sensor_id + '_' + str(today) + '.csv'
             if not os.path.exists(filename):
                 with open(filename, 'w') as f:
                     f.write(header+'\n')
                 # gzip previous day
                 yesterday = date.today() - timedelta(days = 1)
-                yesterday_filename = current_path + sensor_id + '_' + str(yesterday) + '.csv'
+                yesterday_path = log_path + yesterday.year + '/'
+                yesterday_filename = yesterday_path + sensor_id + '_' + str(yesterday) + '.csv'
                 if os.path.exists(yesterday_filename):
                     os.system('gzip ' + yesterday_filename)
             # opening and closing ensures we write in the right file past midnight
