@@ -4,7 +4,7 @@ import os
 import requests
 import ST7735 # LCD display
 import time
-from datetime import datetime # to simplify iso format
+from datetime import datetime, date, timedelta # to simplify iso format
 import colorsys
 from subprocess import PIPE, Popen, check_output
 from PIL import Image, ImageDraw, ImageFont
@@ -243,10 +243,15 @@ while True:
             current_path = log_path + time.strftime('%Y') + '/'
             if not os.path.exists(current_path):
                 os.mkdir(current_path)
-            filename = current_path + sensor_id + '_' + time.strftime('%Y-%m-%d') + '.csv'
+            filename = current_path + sensor_id + '_' + str(date.today()) + '.csv'
             if not os.path.exists(filename):
                 with open(filename, 'w') as f:
                     f.write(header+'\n')
+                # gzip previous day
+                yesterday = date.today() - timedelta(days = 1)
+                yesterday_filename = current_path + sensor_id + '_' + str(yesterday) + '.csv'
+                if os.path.exists(yesterday_filename):
+                    os.system('gzip ' + yesterday_filename)
             # opening and closing ensures we write in the right file past midnight
             f = open(filename, 'a')
             data = [np.mean(raw[v]) for v in variables]
