@@ -250,8 +250,7 @@ while True:
                     f.write(header+'\n')
                 # gzip previous day
                 yesterday = date.today() - timedelta(days = 1)
-                yesterday_path = log_path + yesterday.year + '/'
-                yesterday_filename = yesterday_path + sensor_id + '_' + str(yesterday) + '.csv'
+                yesterday_filename = log_path + yesterday.year + '/' + sensor_id + '_' + str(yesterday) + '.csv'
                 if os.path.exists(yesterday_filename):
                     os.system('gzip ' + yesterday_filename)
             # opening and closing ensures we write in the right file past midnight
