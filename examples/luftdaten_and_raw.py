@@ -241,16 +241,16 @@ while True:
             print(datetime.now().isoformat(), ": saving to local file")
             # write to local file
             today = date.today()
-            current_path = log_path + str(today.year) + '/'
+            current_path = log_path + sensor_id + '/' + str(today.year) + '/'
             if not os.path.exists(current_path):
                 os.mkdir(current_path)
-            filename = current_path + sensor_id + '_' + str(today) + '.csv'
+            filename = current_path + str(today) + '.csv'
             if not os.path.exists(filename):
                 with open(filename, 'w') as f:
                     f.write(header+'\n')
                 # gzip previous day
                 yesterday = date.today() - timedelta(days = 1)
-                yesterday_filename = log_path + str(yesterday.year) + '/' + sensor_id + '_' + str(yesterday) + '.csv'
+                yesterday_filename = log_path + sensor_id + '/' + str(yesterday.year) + '/' + str(yesterday) + '.csv'
                 if os.path.exists(yesterday_filename):
                     os.system('gzip ' + yesterday_filename)
             # opening and closing ensures we write in the right file past midnight
