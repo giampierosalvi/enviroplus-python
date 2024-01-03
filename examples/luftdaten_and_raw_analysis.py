@@ -22,6 +22,7 @@ import seaborn as sns
 import os
 import re
 import glob
+import datetime
 
 # read data from multiple files
 dataroot = os.path.expanduser('~/MEGA/air_quality')
@@ -111,10 +112,11 @@ axs[2].set_title('PM 10')
 
 # +
 from scipy.signal import savgol_filter
-def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False):
-    lastday = df['date'][-1]
+def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False, lastday=None):
+    if lastday==None:
+        lastday = df['date'][-1]
     for date in df['date'].unique():
-        if (lastday-date).days > 7: # only show last week
+        if (lastday-date).days > 7 or (lastday-date).days < 0: # only show one week
             continue
         bydate = df[df['date']==date]
         y = bydate[var].to_numpy()
@@ -133,9 +135,11 @@ def plotVsTimeOfDay(df=None, var=None, ax=None, smooth=False):
 # series vs time of day
 fig, axs = plt.subplots(3, 1, figsize=(12, 18))
 smooth = True
-plotVsTimeOfDay(data, 'pm1 (ug/m3)', axs[0], smooth)
-plotVsTimeOfDay(data, 'pm25 (ug/m3)', axs[1], smooth)
-plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2], smooth)
+#lastday = datetime.date(2023, 1, 3)
+lastday = None
+plotVsTimeOfDay(data, 'pm1 (ug/m3)', axs[0], smooth, lastday)
+plotVsTimeOfDay(data, 'pm25 (ug/m3)', axs[1], smooth, lastday)
+plotVsTimeOfDay(data, 'pm10 (ug/m3)', axs[2], smooth, lastday)
 #bydate = data.copy()
 #bydate.set_index('timeofday')
 #bydate = bydate.groupby('date')
